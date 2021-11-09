@@ -1,105 +1,102 @@
-
-mod name;
-
-use name::*;
-
 use core::ops::RangeFrom;
 
-
-
-#[derive(Debug)]
-struct Site {
-	url: Unique<String>,
-	title: String,
-}
-#[derive(Debug)]
-struct Link {
-	from: Foreign<Site>,
-	to: Foreign<Site>,
-	text: String,
+struct Row<T> {
+	ident: u32,
+	value: T,
 }
 
-impl InsertIntoDatabase<(A<Column<Site>>, B<Column<Link>>,)> for A<Site> {
-	fn insert_into_database(self, (A(ref mut a), ..): &mut (A<Column<Site>>, B<Column<Link>>,)) -> Result<(), Error> {
-		self.0.url.check_constraint(a)?;
-
-		a.insert(self.0);
-
-		Ok(())
-	}
-}
-
-/// analogous to `SQL` `FOREIGN KEY`
-#[derive(Debug)]
-struct Foreign<T>(T);
-
-/// analogous to `SQL` `UNIQUE`
-#[derive(Debug)]
-struct Unique<T>(T);
-
-impl<T: Eq> Unique<T> {
-	fn check_constraint(&self, other: &Iter<T>) -> Result<(), Error> {
-		if column.iter().all(|other| other.0 != self.0) {
-			Ok(())
-		} else {
-			Err(String::from("Unique constraint violated"))
-		}
-	}
-}
-
-type Error = String;
-
-trait InsertIntoDatabase<D>: Name {
-	fn insert_into_database(self, _: &mut D) -> Result<(), Error>;
-}
-
-
-#[derive(Debug)]
-struct Entry<T> {
-	key: u32,
-	val: T,
-}
-
-#[derive(Debug)]
 struct Column<T> {
-	unique_key_factory: RangeFrom<u32>,
-	data: Vec<Option<Entry<T>>>,
+	cuidf: RangeFrom<u32>, // column unique identifier factory
+	items: Vec<Option<Row<T>>>,
 }
 
 impl<T> Column<T> {
 	fn new() -> Self {
 		Self {
-			unique_key_factory: 0..,
-			data: Vec::new(),
+			cuidf: 0..,
+			items: Vec::new(),
 		}
 	}
-	fn first_free_mut(&mut self) -> &mut Option<Entry<T>> {
-		if let Some(slot) = self.data.iter_mut().find(|option| option.is_some()) {
-			slot
-		} else {
-			self.data.push(None);
-
-			self.data.last_mut().expect("unreachable")
-		}
+	fn next_cuid(&mut self) -> u32 {
+		self.cuidf.next().expect("bitspace exhausted")
 	}
-	fn insert(&mut self, val: T) -> u32 {
-		let key = self.unique_key_factory.next().expect("bitspace exhausted");
+}
 
-		*self.first_free_mut() = Some(Entry { key, val });
+struct Site {
+	url: String, // unique,
+	title: String,
+}
 
-		key
+impl Site {}
+
+struct Link {
+	from: u32, // foreign key `Site`
+	to: u32,   // foreign key `Site`
+	text: String,
+}
+
+struct LinkRef<'a> {
+	from: &'a Site,
+	to: &'a Site,
+	text: &'a String,
+}
+
+impl Link {
+	fn iter(database: &Database) -> impl Iterator<Item = LinkRef> {
+		database.link.items.iter().flat_map(|slot| {
+			let Row {
+				value: Link {
+					from: from_ident,
+					to: to_ident,
+					ref text,
+				},
+				..
+			} = *slot.as_ref()?;
+
+			let mut sites = database.site.items.iter();
+
+			let mut from = None;
+			let mut to = None;
+
+			for row in database.site.items.iter().flat_map(|slot| slot.as_ref()) {
+				if row.ident == from_ident {
+					from = Some(&row.value);
+
+					if to.is_some() {
+						break;
+					}
+				} else if row.ident == to_ident {
+					to = Some(&row.value);
+
+					if from.is_some() {
+						break;
+					}
+				}
+			}
+
+			Some(LinkRef {
+				from: from.expect("foreign key constraint violated"),
+				to: to.expect("foreign key constraint violated"),
+				text,
+			})
+		})
+	}
+}
+
+struct Database {
+	site: Column<Site>,
+	link: Column<Link>,
+}
+
+impl Database {
+	fn new() -> Self {
+		Self {
+			site: Column::new(),
+			link: Column::new(),
+		}
 	}
 }
 
 fn main() {
- 	let mut database = (
-		A(Column::<Site>::new()),
-		B(Column::<Link>::new()),
-	);
-
-	let site = Site { url: Unique(String::from("https://google.com")), title: String::from("Google") };
-
-	A(site).insert_into_database(&mut database);
-
-	println!("{:?}", database);
+	let mut database = Database::new();
 }
